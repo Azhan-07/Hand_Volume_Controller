@@ -1,4 +1,4 @@
-# HandVolumizer 🖐️
+# Hand_Volume_Controller 🖐️
 
 Control your system volume with hand gestures, using nothing but your webcam.
 
