@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HandVolumizer — Web Edition</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #2ea043;
+    --red: #f85149;
+    --magenta: #bc8cff;
+    --amber: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    min-height: 100vh;
+  }
+  main {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+  }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 0.9rem; line-height: 1.5; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  button {
+    background: var(--green);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 1rem;
+    font-family: inherit;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .stage {
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+    aspect-ratio: 4 / 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #cameraOff {
+    color: var(--muted);
+    font-size: 1rem;
+  }
+  video { width: 100%; height: 100%; display: block; object-fit: cover; }
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .status-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .card .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .card .value { font-size: 1.35rem; font-weight: 700; margin-top: 4px; }
+  .value.mode { color: var(--red); }
+  .value.mode.on { color: var(--green); }
+  .value.muted { color: var(--red); }
+  .meter {
+    height: 10px;
+    background: var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .meter > div {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--green), var(--amber));
+    border-radius: 6px;
+    transition: width 80ms linear;
+  }
+  .guide {
+    margin-top: 20px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 0.85rem;
+    line-height: 1.7;
+  }
+  .guide h2 { font-size: 0.9rem; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; }
+  .guide table { border-collapse: collapse; width: 100%; }
+  .guide td, .guide th { text-align: left; padding: 3px 8px 3px 0; vertical-align: top; }
+  .guide td:first-child { white-space: nowrap; color: var(--magenta); }
+  .flash {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(13,17,23,.85);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    opacity: 0;
+    transition: opacity 150ms;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .flash.show { opacity: 1; }
+  .note { color: var(--muted); font-size: 0.8rem; margin-top: 16px; line-height: 1.6; }
+  a { color: var(--magenta); }
+</style>
+</head>
+<body>
+<main>
+  <h1>HandVolumizer 🖐️</h1>
+  <p class="sub">Control audio volume with hand gestures, using nothing but your webcam. Pinch your thumb
+    and index finger to set the volume of the built-in tone from 0–100%. All tracking runs locally in your browser.</p>
+
+  <div class="controls">
+    <button id="startBtn">▶ Start camera &amp; sound</button>
+    <button id="toneBtn" disabled>🔊 Tone on/off</button>
+    <span class="sub" id="camStatus">Camera not started</span>
+  </div>
+
+  <div class="stage">
+    <div id="cameraOff">Click <strong>Start</strong> to allow camera access</div>
+    <video id="video" autoplay playsinline style="display:none"></video>
+    <canvas id="overlay" style="display:none"></canvas>
+    <div class="flash" id="flash"></div>
+  </div>
+
+  <div class="status-row">
+    <div class="card"><div class="label">Mode</div><div class="value mode" id="mode">IDLE</div></div>
+    <div class="card"><div class="label">Volume</div><div class="value" id="vol">0%</div>
+      <div class="meter"><div id="volBar"></div></div></div>
+    <div class="card"><div class="label">Mute</div><div class="value muted" id="mute">OFF</div></div>
+    <div class="card"><div class="label">Gesture</div><div class="value" id="gesture">—</div></div>
+  </div>
+
+  <div class="guide">
+    <h2>Gesture guide</h2>
+    <table>
+      <tr><td>👊 Fist (hold ~0.6s)</td><td>Toggle between IDLE and VOLUME mode</td></tr>
+      <tr><td>✋ Flat hand</td><td>Active volume posture</td></tr>
+      <tr><td>🤏 Pinch (thumb + index)</td><td>Set volume 0–100% (VOLUME mode only)</td></tr>
+      <tr><td>✌️ V sign</td><td>Mute / unmute</td></tr>
+    </table>
+  </div>
+
+  <p class="note">Web edition of the <a href="https://github.com/Azhan-07/Hnad_Volume_Controller" target="_blank" rel="noopener">HandVolumizer</a> repo.
+    Browsers can't change your system volume, so the gestures control the volume of the built-in tone instead
+    (the desktop app in <code>hand.py</code> controls your real system volume with pycaw).</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466862/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+<script>
+(function () {
+  // ---- DOM ----
+  var startBtn = document.getElementById('startBtn');
+  var toneBtn = document.getElementById('toneBtn');
+  var camStatus = document.getElementById('camStatus');
+  var stage = document.querySelector('.stage');
+  var cameraOff = document.getElementById('cameraOff');
+  var video = document.getElementById('video');
+  var canvas = document.getElementById('overlay');
+  var ctx = canvas.getContext('2d');
+  var flashEl = document.getElementById('flash');
+  var modeEl = document.getElementById('mode');
+  var volEl = document.getElementById('vol');
+  var volBar = document.getElementById('volBar');
+  var muteEl = document.getElementById('mute');
+  var gestureEl = document.getElementById('gesture');
+
+  if (!navigator.mediaDevices || !window.Hands) {
+    camStatus.textContent = 'Unsupported browser or MediaPipe failed to load. Try Chrome/Edge over HTTPS.';
+    startBtn.disabled = true;
+    return;
+  }
+
+  // ---- Audio (WebAudio tone; volume is our gesture target) ----
+  var audioCtx = null, osc = null, gain = null, toneOn = false;
+  function initAudio() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 440;
+    gain = audioCtx.createGain();
+    gain.gain.value = 0.5;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    toneOn = true;
+  }
+  function setTone(on) {
+    if (!gain) return;
+    modeEl.textContent = on ? 'ON' : 'OFF';
+    toneBtn.textContent = on ? '🔊 Tone on/off' : '🔇 Tone on/off';
+  }
+  toneBtn.addEventListener('click', function () {
+    if (!gain) return;
+    toneOn = !toneOn;
+    setTone(toneOn);
+    applyVolume();
+  });
+
+  // ---- State (ported from hand.py) ----
+  var inVolumeMode = false;
+  var volSmooth = 0;
+  var smoothing = 0.7;
+  var minD = 30, maxD = 220;
+  var muted = false;
+  var fps = 0, lastT = 0;
+
+  function HoldSwitch(holdTime) {
+    this.holdTime = holdTime;
+    this.start = null;
+    this.primed = false;
+  }
+  HoldSwitch.prototype.update = function (active) {
+    var now = performance.now() / 1000;
+    if (!active) { this.start = null; this.primed = false; return false; }
+    if (this.start === null) { this.start = now; return false; }
+    if (!this.primed && now - this.start >= this.holdTime) { this.primed = true; return true; }
+    return false;
+  };
+  var toggleSwitch = new HoldSwitch(0.6);
+  var muteSwitch = new HoldSwitch(0.3);
+
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+  function angleBetween(a, b, c) {
+    var v1 = [a.x - b.x, a.y - b.y];
+    var v2 = [c.x - b.x, c.y - b.y];
+    var denom = Math.hypot.apply(null, v1) * Math.hypot.apply(null, v2);
+    if (denom === 0) return 0;
+    var cos = (v1[0] * v2[0] + v1[1] * v2[1]) / denom;
+    return Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+  }
+
+  function classify(landmarks) {
+    var up = [];
+    up.push(angleBetween(landmarks[2], landmarks[3], landmarks[4]) < 160);
+    [[5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]].forEach(function (t) {
+      up.push(angleBetween(landmarks[t[0]], landmarks[t[1]], landmarks[t[2]]) < 160);
+    });
+    var counts = up.filter(Boolean).length;
+    if (counts === 0) return 'fist';
+    if (counts === 5) return 'flat';
+    if (up[1] && up[2] && !up[3] && !up[4]) return 'v';
+    return 'unknown';
+  }
+
+  function mapVolume(d) {
+    return ((Math.max(minD, Math.min(maxD, d)) - minD) / (maxD - minD)) * 100;
+  }
+
+  function applyVolume() {
+    if (gain) gain.gain.value = toneOn && !muted ? volSmooth / 100 : 0;
+    volEl.textContent = Math.round(volSmooth) + '%';
+    volBar.style.width = Math.round(volSmooth) + '%';
+    muteEl.textContent = muted ? 'ON' : 'OFF';
+    muteEl.style.color = muted ? 'var(--red)' : 'var(--green)';
+  }
+
+  function flash(msg) {
+    flashEl.textContent = msg;
+    flashEl.classList.add('show');
+    clearTimeout(flash._t);
+    flash._t = setTimeout(function () { flashEl.classList.remove('show'); }, 900);
+  }
+
+  function setModeUI() {
+    var on = inVolumeMode;
+    modeEl.textContent = on ? 'VOLUME' : 'IDLE';
+    modeEl.classList.toggle('on', on);
+  }
+
+  // ---- MediaPipe Hands ----
+  var hands = new Hands({
+    locateFile: function (file) {
+      return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + file;
+    }
+  });
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.5
+  });
+
+  hands.onResults(function (res) {
+    var w = res.image.width, h = res.image.height;
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(res.image, 0, 0, w, h);
+
+    if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+      var lm = res.multiHandLandmarks[0];
+      drawConnectors(ctx, lm, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
+      drawLandmarks(ctx, lm, { color: '#FFFF00', radius: 4, lineWidth: 1 });
+
+      var gesture = classify(lm);
+      gestureEl.textContent = gesture;
+
+      if (toggleSwitch.update(gesture === 'fist')) {
+        inVolumeMode = !inVolumeMode;
+        setModeUI();
+        flash('Mode → ' + (inVolumeMode ? 'VOLUME' : 'IDLE'));
+      }
+      if (muteSwitch.update(gesture === 'v')) {
+        muted = !muted;
+        applyVolume();
+        flash('Mute → ' + (muted ? 'ON' : 'OFF'));
+      }
+
+      var thumb = { x: lm[4].x * w, y: lm[4].y * h };
+      var index = { x: lm[8].x * w, y: lm[8].y * h };
+      var d = dist(thumb, index);
+
+      if (inVolumeMode && gesture !== 'fist' && gesture !== 'v') {
+        var target = mapVolume(d);
+        volSmooth = volSmooth * smoothing + target * (1 - smoothing);
+        applyVolume();
+        ctx.beginPath();
+        ctx.moveTo(thumb.x, thumb.y);
+        ctx.lineTo(index.x, index.y);
+        ctx.strokeStyle = '#FF00FF';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.fillStyle = '#00FF00';
+        ctx.beginPath(); ctx.arc(thumb.x, thumb.y, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(index.x, index.y, 8, 0, Math.PI * 2); ctx.fill();
+      }
+
+      var stateColor = inVolumeMode ? '#00FF00' : '#FF0000';
+      ctx.fillStyle = stateColor;
+      ctx.font = 'bold 28px monospace';
+      ctx.fillText('Mode: ' + (inVolumeMode ? 'VOLUME' : 'IDLE'), 14, 36);
+      ctx.fillStyle = muted ? '#FF0000' : '#FFFF00';
+      ctx.font = '22px monospace';
+      ctx.fillText('Vol: ' + Math.round(volSmooth) + '%  Mute: ' + (muted ? 'ON' : 'OFF'), 14, 72);
+    }
+
+    var now = performance.now() / 1000;
+    var dt = now - lastT;
+    if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
+    lastT = now;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '16px monospace';
+    ctx.fillText('FPS: ' + Math.round(fps), 14, (canvas.height || h) - 14);
+  });
+
+  function startCamera() {
+    var camera = new Camera(video, {
+      onFrame: function () { hands.send({ image: video }); },
+      width: 640,
+      height: 480
+    });
+    camera.start().then(function () {
+      video.style.display = 'block';
+      canvas.style.display = 'block';
+      cameraOff.style.display = 'none';
+      camStatus.textContent = 'Tracking — pinch to adjust volume';
+      startBtn.disabled = true;
+    });
+  }
+
+  startBtn.addEventListener('click', function () {
+    startBtn.disabled = true;
+    camStatus.textContent = 'Requesting camera…';
+    try {
+      initAudio();
+    } catch (e) {
+      console.warn('Audio init failed', e);
+    }
+    startBtn.textContent = '⏳ Starting…';
+    startCamera();
+  });
+})();
+</script>
+</body>
+</html>

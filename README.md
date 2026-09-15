@@ -76,9 +76,32 @@ volume/mute changes to the console so the gesture logic still runs.
 
 ```
 handvolumizer/
-├── hand.py        # Single-file implementation (gesture tracking + backends)
-├── requirements   # See Installation section
+├── hand.py        # Desktop implementation (gesture tracking + backends)
+├── app.py         # Flask web app (Vercel entrypoint)
+├── requirements.txt
+├── templates/
+│   └── index.html # Web edition — MediaPipe.js hand tracking in the browser
 └── .gitignore
+```
+
+## Web edition
+
+A Flask + MediaPipe.js port of the same gesture logic that runs entirely in the
+browser (no server-side video). It deploys on Vercel. Because browsers cannot
+change your system volume, the web version applies the pinch distance to the
+volume of a built-in tone instead of your speakers.
+
+Run it locally:
+
+```bash
+pip install flask
+python app.py   # → http://localhost:5000
+```
+
+Deploy to Vercel with zero config (Vercel auto-detects Flask from `app.py`):
+
+```bash
+vercel --prod
 ```
 
 ## Platform backends

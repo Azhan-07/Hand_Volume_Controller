@@ -24,5 +24,8 @@ env/
 .DS_Store
 Thumbs.db
 
+# Vercel
+.vercel/
+
 # Logs
 *.log
