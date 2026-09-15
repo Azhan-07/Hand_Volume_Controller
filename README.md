@@ -1,4 +1,4 @@
-# HandVolumizer 🖐️
+# Hand_Volume_Controller 🖐️
 
 Control your system volume with hand gestures, using nothing but your webcam.
 
@@ -44,7 +44,7 @@ MediaPipe Hands produces 21 2D hand landmarks per detected hand. The app:
 ## Installation
 
 ```bash
-git clone https://github.com/yourname/handvolumizer.git
+git clone https://github.com/Azhan-07/Hand_Volume_Controller/
 cd handvolumizer
 python -m venv .venv
 
