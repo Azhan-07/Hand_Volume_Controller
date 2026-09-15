@@ -55,10 +55,7 @@
     align-items: center;
     justify-content: center;
   }
-  #cameraOff {
-    color: var(--muted);
-    font-size: 1rem;
-  }
+  #cameraOff { color: var(--muted); font-size: 1rem; text-align: center; padding: 0 20px; }
   video { width: 100%; height: 100%; display: block; object-fit: cover; }
   canvas {
     position: absolute;
@@ -82,7 +79,7 @@
   .card .value { font-size: 1.35rem; font-weight: 700; margin-top: 4px; }
   .value.mode { color: var(--red); }
   .value.mode.on { color: var(--green); }
-  .value.muted { color: var(--red); }
+  .value.muted { color: var(--green); }
   .meter {
     height: 10px;
     background: var(--border);
@@ -139,7 +136,7 @@
   <div class="controls">
     <button id="startBtn">▶ Start camera &amp; sound</button>
     <button id="toneBtn" disabled>🔊 Tone on/off</button>
-    <span class="sub" id="camStatus">Camera not started</span>
+    <span class="sub" id="camStatus"></span>
   </div>
 
   <div class="stage">
@@ -172,16 +169,16 @@
     (the desktop app in <code>hand.py</code> controls your real system volume with pycaw).</p>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466862/drawing_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.js"
+        onerror="mediaPipeFailed()"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"
+        onerror="mediaPipeFailed()"></script>
 <script>
 (function () {
   // ---- DOM ----
   var startBtn = document.getElementById('startBtn');
   var toneBtn = document.getElementById('toneBtn');
   var camStatus = document.getElementById('camStatus');
-  var stage = document.querySelector('.stage');
   var cameraOff = document.getElementById('cameraOff');
   var video = document.getElementById('video');
   var canvas = document.getElementById('overlay');
@@ -193,17 +190,33 @@
   var muteEl = document.getElementById('mute');
   var gestureEl = document.getElementById('gesture');
 
-  if (!navigator.mediaDevices || !window.Hands) {
-    camStatus.textContent = 'Unsupported browser or MediaPipe failed to load. Try Chrome/Edge over HTTPS.';
+  window.mediaPipeFailed = function () {
+    log('Failed to load MediaPipe from CDN — check your internet connection, then refresh.');
+    startBtn.disabled = true;
+  };
+
+  function log(msg) {
+    camStatus.textContent = msg;
+    if (performance.now() - (log._last || 0) > 30000) {
+      var p = document.createElement('p');
+      p.className = 'note';
+      p.textContent = msg;
+      camStatus.parentNode.appendChild(p);
+      log._last = performance.now();
+    }
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    log('Your browser needs camera access (HTTPS). Open this link in Chrome or Edge.');
     startBtn.disabled = true;
     return;
   }
 
   // ---- Audio (WebAudio tone; volume is our gesture target) ----
-  var audioCtx = null, osc = null, gain = null, toneOn = false;
+  var audioCtx = null, gain = null, toneOn = false;
   function initAudio() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    osc = audioCtx.createOscillator();
+    var osc = audioCtx.createOscillator();
     osc.type = 'sine';
     osc.frequency.value = 440;
     gain = audioCtx.createGain();
@@ -213,15 +226,10 @@
     osc.start();
     toneOn = true;
   }
-  function setTone(on) {
-    if (!gain) return;
-    modeEl.textContent = on ? 'ON' : 'OFF';
-    toneBtn.textContent = on ? '🔊 Tone on/off' : '🔇 Tone on/off';
-  }
   toneBtn.addEventListener('click', function () {
     if (!gain) return;
     toneOn = !toneOn;
-    setTone(toneOn);
+    toneBtn.textContent = toneOn ? '🔊 Tone on/off' : '🔇 Tone on/off';
     applyVolume();
   });
 
@@ -232,6 +240,9 @@
   var minD = 30, maxD = 220;
   var muted = false;
   var fps = 0, lastT = 0;
+  var running = false;
+  var processing = false;
+  var trackingError = false;
 
   function HoldSwitch(holdTime) {
     this.holdTime = holdTime;
@@ -292,17 +303,23 @@
   }
 
   function setModeUI() {
-    var on = inVolumeMode;
-    modeEl.textContent = on ? 'VOLUME' : 'IDLE';
-    modeEl.classList.toggle('on', on);
+    modeEl.textContent = inVolumeMode ? 'VOLUME' : 'IDLE';
+    modeEl.classList.toggle('on', inVolumeMode);
   }
 
-  // ---- MediaPipe Hands ----
-  var hands = new Hands({
-    locateFile: function (file) {
-      return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + file;
-    }
-  });
+  // ---- MediaPipe Hands (loaded from CDN, runs fully in-browser) ----
+  var hands;
+  try {
+    hands = new Hands({
+      locateFile: function (file) {
+        return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + file;
+      }
+    });
+  } catch (e) {
+    log('MediaPipe failed to load: ' + e.message + ' — refresh the page.');
+    startBtn.disabled = true;
+    return;
+  }
   hands.setOptions({
     maxNumHands: 1,
     modelComplexity: 1,
@@ -354,8 +371,7 @@
         ctx.beginPath(); ctx.arc(index.x, index.y, 8, 0, Math.PI * 2); ctx.fill();
       }
 
-      var stateColor = inVolumeMode ? '#00FF00' : '#FF0000';
-      ctx.fillStyle = stateColor;
+      ctx.fillStyle = inVolumeMode ? '#00FF00' : '#FF0000';
       ctx.font = 'bold 28px monospace';
       ctx.fillText('Mode: ' + (inVolumeMode ? 'VOLUME' : 'IDLE'), 14, 36);
       ctx.fillStyle = muted ? '#FF0000' : '#FFFF00';
@@ -372,32 +388,65 @@
     ctx.fillText('FPS: ' + Math.round(fps), 14, (canvas.height || h) - 14);
   });
 
-  function startCamera() {
-    var camera = new Camera(video, {
-      onFrame: function () { hands.send({ image: video }); },
-      width: 640,
-      height: 480
-    });
-    camera.start().then(function () {
+  // ---- Camera loop (plain getUserMedia; no external helper needed) ----
+  function trackLoop() {
+    if (running && !processing && video.readyState >= 2) {
+      processing = true;
+      hands.send({ image: video }).then(function () {
+        processing = false;
+      }).catch(function (err) {
+        processing = false;
+        if (!trackingError) {
+          trackingError = true;
+          log('Tracking error: ' + (err && err.message ? err.message : err) + ' — refresh the page.');
+        }
+      });
+    }
+    if (running) requestAnimationFrame(trackLoop);
+  }
+
+  function onStart() {
+    startBtn.disabled = true;
+    log('Loading AI model…');
+
+    window.setTimeout(function () {
+      try { initAudio(); } catch (e) { console.warn('Audio init failed', e); }
+      toneBtn.disabled = false;
+      toneBtn.textContent = '🔊 Tone on/off';
+    }, 0);
+
+    hands.initialize().then(function () {
+      startBtn.textContent = 'Requesting camera…';
+      log('Requesting camera permission…');
+      return navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false
+      });
+    }).then(function (stream) {
+      video.srcObject = stream;
+      return video.play();
+    }).then(function () {
       video.style.display = 'block';
       canvas.style.display = 'block';
       cameraOff.style.display = 'none';
-      camStatus.textContent = 'Tracking — pinch to adjust volume';
-      startBtn.disabled = true;
+      running = true;
+      requestAnimationFrame(trackLoop);
+      log('Tracking — pinch to adjust volume');
+      startBtn.textContent = '▶ Running';
+    }).catch(function (err) {
+      startBtn.disabled = false;
+      startBtn.textContent = '▶ Start camera & sound';
+      var msg = (err && err.message) ? err.message : String(err);
+      if (/permission|denied|NotAllowed/i.test(msg)) {
+        log('Camera access was blocked. Click the camera icon in your browser address bar to allow it, then press Start again.');
+      } else {
+        log('Error: ' + msg);
+      }
+      console.error(err);
     });
   }
 
-  startBtn.addEventListener('click', function () {
-    startBtn.disabled = true;
-    camStatus.textContent = 'Requesting camera…';
-    try {
-      initAudio();
-    } catch (e) {
-      console.warn('Audio init failed', e);
-    }
-    startBtn.textContent = '⏳ Starting…';
-    startCamera();
-  });
+  startBtn.addEventListener('click', onStart);
 })();
 </script>
 </body>
