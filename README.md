@@ -8,8 +8,11 @@ down — no touching your keyboard or trackpad required.
 ## Features
 
 - **Gesture-driven volume** — pinch your thumb and index finger to set volume from 0–100%
+- **System OR browser volume** — a held 🤙 **Shaka** (thumb + pinky) switches the pinch
+  between the system master volume and the browser tab currently playing audio
+  (Chrome / Edge / Firefox / Brave / Opera / Vivaldi, Windows-only)
 - **No accidental toggling** — a held **fist** switches between `IDLE` and `VOLUME` mode; the flat hand used for volume never double-fires a toggle
-- **Quick mute** — flash a **V sign** to mute/unmute in any mode
+- **Quick mute** — flash a **V sign** to mute/unmute the active target in any mode
 - **Rotation-invariant detection** — fingers are detected via joint angles (MediaPipe landmark angles), so it works from any camera angle
 - **Smooth output** — exponential moving-average smoothing prevents volume jitter
 - **Cross-platform** — works on Windows, macOS, and Linux
@@ -30,8 +33,9 @@ MediaPipe Hands produces 21 2D hand landmarks per detected hand. The app:
 | --- | --- |
 | 👊 **Fist** (hold ~0.6s) | Toggle between `IDLE` and `VOLUME` mode |
 | ✋ **Flat hand** | Active volume posture (drawn as a pinch line) |
+| 🤙 **Shaka** (thumb + pinky, hold ~0.6s) | Switch volume target: system ↔ browser tab |
 | 🤏 **Pinch** (thumb + index distance) | Set volume 0–100% (only in `VOLUME` mode) |
-| ✌️ **V sign** (index + middle up) | Mute / unmute |
+| ✌️ **V sign** (index + middle up) | Mute / unmute the active target |
 | `q` | Quit the app |
 
 ## Requirements
@@ -108,7 +112,7 @@ vercel --prod
 
 | OS | Volume control |
 | --- | --- |
-| Windows | `pycaw` `IAudioEndpointVolume` on the default render device (system-wide) |
+| Windows | `pycaw` `IAudioEndpointVolume` on the default render device (system-wide), plus `ISimpleAudioVolume` per-app for the playing browser tab (Shaka to switch) |
 | macOS | `osascript` (`set volume output volume`) |
 | Linux | `amixer sset Master` |
 | Fallback | Prints the would-be change (feature development / unsupported OS) |
@@ -120,7 +124,10 @@ vercel --prod
 - **Hand not detected** — raise lighting, keep the palm facing the camera, and
   stay within ~0.5–2 m of the lens.
 - **Volume jumps while using control gestures** — this is intentional: volume
-  updates are suspended while a fist or V sign is recognized.
+  updates are suspended while a fist, Shaka, or V sign is recognized.
+- **Browser target but nothing happens** — play audio in the browser first; the
+  app scans every second for a browser session that is currently making sound.
+  Per-app volume only works on Windows.
 
 ## Roadmap
 

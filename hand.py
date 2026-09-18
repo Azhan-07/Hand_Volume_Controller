@@ -8,6 +8,15 @@ import subprocess
 # --- Platform volume control backends ---
 PLATFORM = sys.platform
 
+# Default: per-app (browser) volume is Windows-only; other OSes fall back to prints.
+def set_browser_volume(percent):
+    print(f"browser volume -> {percent:.1f}%  [per-app volume only supported on Windows]")
+
+
+def set_browser_mute(muted):
+    print(f"browser mute -> {'ON' if muted else 'OFF'}  [per-app volume only supported on Windows]")
+
+
 if PLATFORM.startswith("win"):
 
     _vol = None
@@ -42,6 +51,81 @@ if PLATFORM.startswith("win"):
         else:
             print(f"mute -> {'ON' if muted else 'OFF'}  [pycaw unavailable]")
 
+    # --- Per-app (browser) volume via Windows Volume Mixer ---
+    BROWSER_PROCESSES = ("chrome.exe", "msedge.exe", "firefox.exe",
+                         "brave.exe", "opera.exe", "vivaldi.exe")
+
+    _browser = None
+    _browser_scan_time = 0.0
+    _no_session_warn = 0.0
+
+    def get_browser_session():
+        """Best browser audio session; prefers one currently playing audio."""
+        global _browser, _browser_scan_time
+        now = time.time()
+        if now - _browser_scan_time < 1.0:
+            return _browser
+        _browser_scan_time = now
+        try:
+            sessions = AudioUtilities.GetAllSessions()
+            fallback = None
+            for s in sessions:
+                if s.Process is None:
+                    continue
+                if s.Process.name().lower() in BROWSER_PROCESSES:
+                    if s.State == 1:  # AudioSessionStateActive — making sound now
+                        _browser = s
+                        return _browser
+                    if fallback is None:
+                        fallback = s
+            _browser = fallback
+        except Exception as e:
+            print("browser session scan failed:", e)
+            _browser = None
+        return _browser
+
+    def _reset_browser_scan():
+        global _browser, _browser_scan_time
+        _browser = None
+        _browser_scan_time = 0.0
+
+    def set_browser_volume(percent):
+        global _no_session_warn
+        percent = max(0.0, min(100.0, float(percent)))
+        if _vol is None:
+            return
+        sess = get_browser_session()
+        if sess is None:
+            now = time.time()
+            if now - _no_session_warn > 2.0:
+                _no_session_warn = now
+                print("browser volume -> %.1f%%  [no browser playing; "
+                      "start audio in a browser first]" % percent)
+            return
+        try:
+            sess.SetMasterVolume(percent / 100.0, None)
+        except Exception as e:
+            print("browser volume failed:", e)
+            _reset_browser_scan()
+
+    def set_browser_mute(muted):
+        global _no_session_warn
+        if _vol is None:
+            return
+        sess = get_browser_session()
+        if sess is None:
+            now = time.time()
+            if now - _no_session_warn > 2.0:
+                _no_session_warn = now
+                print("browser mute -> %s  [no browser playing; "
+                      "start audio in a browser first]" % ("ON" if muted else "OFF"))
+            return
+        try:
+            sess.SetMute(1 if muted else 0, None)
+        except Exception as e:
+            print("browser mute failed:", e)
+            _reset_browser_scan()
+
 elif PLATFORM == "darwin":  # macOS
 
     def set_volume(percent):
@@ -67,6 +151,24 @@ else:
 
     def set_mute(muted):
         print(f"mute -> {'ON' if muted else 'OFF'}  [Unsupported OS]")
+
+
+# --- Volume target dispatch: system-wide or the browser tab that's playing ---
+volume_target = "system"  # "system" (master) or "browser" (per-app, Windows)
+
+
+def set_target_volume(percent):
+    if volume_target == "browser":
+        set_browser_volume(percent)
+    else:
+        set_volume(percent)
+
+
+def set_target_mute(muted):
+    if volume_target == "browser":
+        set_browser_mute(muted)
+    else:
+        set_mute(muted)
 
 
 mp_hands = mp.solutions.hands
@@ -121,6 +223,9 @@ def classify_gesture(up):
     # V sign: index + middle up, ring + pinky down (thumb state ignored)
     if up[1] and up[2] and not up[3] and not up[4]:
         return "v"
+    # Shaka: thumb + pinky up, others down — switches volume target
+    if up[0] and up[4] and not up[1] and not up[2] and not up[3]:
+        return "shaka"
     return "unknown"
 
 
@@ -162,6 +267,7 @@ in_volume_mode = False
 muted = False
 toggle_switch = HoldSwitch(0.6)
 mute_switch = HoldSwitch(0.3)
+target_switch = HoldSwitch(0.6)
 
 
 try:
@@ -188,25 +294,31 @@ try:
             if toggle_switch.update(gesture == "fist"):
                 in_volume_mode = not in_volume_mode
 
-            # V sign toggles mute, active in any mode.
+            # Shaka (thumb + pinky, hold 0.6s) switches the pinch target between
+            # the system master volume and the browser tab that is playing audio.
+            if target_switch.update(gesture == "shaka"):
+                volume_target = "system" if volume_target == "browser" else "browser"
+                print(f"volume target -> {volume_target}")
+
+            # V sign toggles mute on the active target, in any mode.
             if mute_switch.update(gesture == "v"):
                 muted = not muted
-                set_mute(muted)
+                set_target_mute(muted)
 
             thumb_tip = (int(lm[4].x * w), int(lm[4].y * h))
             index_tip = (int(lm[8].x * w), int(lm[8].y * h))
             d = distance(thumb_tip, index_tip)
 
             state_color = (0, 255, 0) if in_volume_mode else (0, 0, 255)
-            cv2.putText(frame, f"Mode: {'VOLUME' if in_volume_mode else 'IDLE'}",
+            cv2.putText(frame, f"Mode: {'VOLUME' if in_volume_mode else 'IDLE'} | Target: {volume_target}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, state_color, 2)
 
             # Volume control is gated so control gestures never yank the volume
             # (e.g. closing a fist to exit mode won't drop it to 0%).
-            if in_volume_mode and gesture not in ("fist", "v"):
+            if in_volume_mode and gesture not in ("fist", "v", "shaka"):
                 target_vol = map_distance_to_volume(d)
                 vol_smooth = vol_smooth * smoothing + target_vol * (1 - smoothing)
-                set_volume(vol_smooth)
+                set_target_volume(vol_smooth)
 
                 cv2.line(frame, thumb_tip, index_tip, (255, 0, 255), 3)
                 cv2.circle(frame, thumb_tip, 8, (0, 255, 0), cv2.FILLED)
@@ -215,7 +327,7 @@ try:
             mute_color = (0, 0, 255) if muted else (255, 255, 0)
             cv2.putText(frame, f"Vol: {vol_smooth:3.0f}%  Mute: {'ON' if muted else 'OFF'}",
                         (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, mute_color, 2)
-            cv2.putText(frame, "FIST (hold): toggle mode | V: mute | pinch: volume",
+            cv2.putText(frame, "FIST(hold): mode | SHAKA(hold): sys/browser | V: mute | pinch: volume",
                         (10, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 2)
 
         # FPS
